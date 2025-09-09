@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
 // Configuración de Supabase
@@ -17,6 +17,24 @@ const EXCLUDED_IPS = [
   '83.56.222.120'
 ];
 
+// Tipo para las conversaciones
+interface Conversation {
+  id: number | string;
+  session_id?: string;
+  device_id?: string;
+  topic?: string;
+  conversation_title?: string;
+  ip?: string;
+  created_at: string;
+  updated_at?: string;
+  hide?: boolean;
+  conversations?: any;
+  property_sets_json?: string;
+  favorited_properties_json?: string;
+  browser_info_json?: string;
+  last_properties_json?: string;
+}
+
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   console.error('⚠️ Falta configurar las variables de entorno en .env.local');
 }
@@ -26,10 +44,10 @@ const supabase = SUPABASE_URL && SUPABASE_ANON_KEY
   : null;
 
 export default function ConversationViewer() {
-  const [allConversations, setAllConversations] = useState([]);
-  const [filteredConversations, setFilteredConversations] = useState([]);
+  const [allConversations, setAllConversations] = useState<Conversation[]>([]);
+  const [filteredConversations, setFilteredConversations] = useState<Conversation[]>([]);
   const [selectedId, setSelectedId] = useState('');
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingList, setLoadingList] = useState(false);
   const [error, setError] = useState('');
@@ -38,6 +56,57 @@ export default function ConversationViewer() {
   const [dateTo, setDateTo] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [showFilters, setShowFilters] = useState(true);
+
+  // Usar useCallback para evitar recrear la función en cada render
+  const loadAllConversations = useCallback(async () => {
+    try {
+      setLoadingList(true);
+      
+      console.log('Cargando conversaciones...');
+      
+      const { data, error } = await supabase!
+        .from(TABLE_NAME)
+        .select('*')
+        .not('conversations', 'is', null)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error de Supabase:', error);
+        throw error;
+      }
+
+      if (data && data.length > 0) {
+        console.log('Columnas disponibles:', Object.keys(data[0]));
+        
+        // Filtrar las IPs excluidas y conversaciones vacías
+        const filteredData = data.filter((conv: Conversation) => 
+          !EXCLUDED_IPS.includes(conv.ip || '') && 
+          conv.conversations !== null &&
+          conv.conversations !== undefined
+        );
+        
+        console.log(`Conversaciones totales: ${data.length}, después de filtros: ${filteredData.length}`);
+        
+        setAllConversations(filteredData);
+        setFilteredConversations(filteredData);
+        
+        // Cargar la primera conversación automáticamente
+        if (filteredData.length > 0) {
+          setSelectedId(filteredData[0].id.toString());
+          loadConversation(filteredData[0].id);
+        }
+      } else {
+        console.log('No se encontraron conversaciones');
+        setAllConversations([]);
+        setFilteredConversations([]);
+      }
+    } catch (err: any) {
+      console.error('Error detallado:', err);
+      setError(`Error al cargar lista: ${err.message || 'Error desconocido'}`);
+    } finally {
+      setLoadingList(false);
+    }
+  }, []);
 
   useEffect(() => {
     // Cargar fuente Poppins
@@ -51,7 +120,7 @@ export default function ConversationViewer() {
     } else {
       setError('Error: Configura las variables de entorno en .env.local');
     }
-  }, []);
+  }, [loadAllConversations]);
 
   useEffect(() => {
     // Aplicar todos los filtros
@@ -77,7 +146,7 @@ export default function ConversationViewer() {
 
     // Filtro de fecha hasta
     if (dateTo) {
-      const toDate = new Date(dateTo + 'T23:59:59'); // Incluir todo el día
+      const toDate = new Date(dateTo + 'T23:59:59');
       filtered = filtered.filter(conv => {
         const convDate = new Date(conv.created_at);
         return convDate <= toDate;
@@ -87,57 +156,7 @@ export default function ConversationViewer() {
     setFilteredConversations(filtered);
   }, [searchFilter, dateFrom, dateTo, allConversations]);
 
-  const loadAllConversations = async () => {
-    try {
-      setLoadingList(true);
-      
-      console.log('Cargando conversaciones...');
-      
-      const { data, error } = await supabase
-        .from(TABLE_NAME)
-        .select('*')
-        .not('conversations', 'is', null) // Filtrar conversaciones NULL
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        console.error('Error de Supabase:', error);
-        throw error;
-      }
-
-      if (data && data.length > 0) {
-        console.log('Columnas disponibles:', Object.keys(data[0]));
-        
-        // Filtrar las IPs excluidas y conversaciones vacías
-        const filteredData = data.filter(conv => 
-          !EXCLUDED_IPS.includes(conv.ip) && 
-          conv.conversations !== null &&
-          conv.conversations !== undefined
-        );
-        
-        console.log(`Conversaciones totales: ${data.length}, después de filtros: ${filteredData.length}`);
-        
-        setAllConversations(filteredData);
-        setFilteredConversations(filteredData);
-        
-        // Cargar la primera conversación automáticamente
-        if (filteredData.length > 0) {
-          setSelectedId(filteredData[0].id.toString());
-          loadConversation(filteredData[0].id);
-        }
-      } else {
-        console.log('No se encontraron conversaciones');
-        setAllConversations([]);
-        setFilteredConversations([]);
-      }
-    } catch (err) {
-      console.error('Error detallado:', err);
-      setError(`Error al cargar lista: ${err.message || 'Error desconocido'}`);
-    } finally {
-      setLoadingList(false);
-    }
-  };
-
-  const normalizeMessages = (conversations) => {
+  const normalizeMessages = (conversations: any) => {
     // Si es un string, intentar parsearlo
     if (typeof conversations === 'string') {
       try {
@@ -158,7 +177,7 @@ export default function ConversationViewer() {
     }
 
     // Normalizar el formato de cada mensaje
-    return conversations.map(msg => {
+    return conversations.map((msg: any) => {
       // Determinar si es usuario o asistente
       let isUser = false;
       if (msg.sender === 'user' || msg.type === 'user') {
@@ -180,10 +199,10 @@ export default function ConversationViewer() {
         timestamp,
         original: msg
       };
-    }).filter(msg => msg.content && msg.content !== 'SUCCESS');
+    }).filter((msg: any) => msg.content && msg.content !== 'SUCCESS');
   };
 
-  const loadConversation = async (id) => {
+  const loadConversation = async (id: number | string) => {
     if (!id || !supabase) return;
 
     try {
@@ -209,7 +228,7 @@ export default function ConversationViewer() {
         setMessages([]);
         setError('No se encontraron conversaciones');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error:', err);
       setError(`Error: ${err.message || 'Error al cargar la conversación'}`);
       setMessages([]);
@@ -218,7 +237,7 @@ export default function ConversationViewer() {
     }
   };
 
-  const handleSelectConversation = (id) => {
+  const handleSelectConversation = (id: number | string) => {
     setSelectedId(id.toString());
     loadConversation(id);
   };
@@ -229,7 +248,7 @@ export default function ConversationViewer() {
     setDateTo('');
   };
 
-  const formatDate = (dateString) => {
+  const formatDate = (dateString: string) => {
     if (!dateString) return '';
     try {
       const date = new Date(dateString);
@@ -244,7 +263,7 @@ export default function ConversationViewer() {
     }
   };
 
-  const formatTimestamp = (timestamp) => {
+  const formatTimestamp = (timestamp: string) => {
     if (!timestamp) return '';
     try {
       const date = new Date(timestamp);
@@ -258,7 +277,7 @@ export default function ConversationViewer() {
   };
 
   // Contar mensajes de la conversación
-  const getMessageCount = (conv) => {
+  const getMessageCount = (conv: Conversation) => {
     try {
       if (conv.conversations) {
         const msgs = normalizeMessages(conv.conversations);
@@ -275,8 +294,8 @@ export default function ConversationViewer() {
     if (allConversations.length === 0) return { min: '', max: '' };
     
     const dates = allConversations.map(c => new Date(c.created_at));
-    const minDate = new Date(Math.min(...dates));
-    const maxDate = new Date(Math.max(...dates));
+    const minDate = new Date(Math.min(...dates.map(d => d.getTime())));
+    const maxDate = new Date(Math.max(...dates.map(d => d.getTime())));
     
     return {
       min: minDate.toISOString().split('T')[0],
@@ -503,7 +522,7 @@ export default function ConversationViewer() {
               ) : (
                 <div className="h-full overflow-y-auto p-6">
                   <div className="space-y-4">
-                    {messages.map((msg, index) => {
+                    {messages.map((msg: any, index: number) => {
                       const alignClass = msg.isUser ? 'justify-end' : 'justify-start';
                       const bubbleStyle = msg.isUser 
                         ? { backgroundColor: '#FFB300', color: 'white' }
